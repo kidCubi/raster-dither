@@ -1,0 +1,740 @@
+/* ---------------------------------------------------------------------------
+   Raster Dither: ink & paper.
+   One paper, one ink, hairline rules, square corners, a single red signal dot.
+   One type size (18px) throughout. Geist for text, Geist Mono for numbers.
+--------------------------------------------------------------------------- */
+
+:root {
+  --paper: #f4f3ef;
+  --paper-raised: #f9f8f5;
+  --ink: #111111;
+  --ink-2: #55544f; /* secondary text */
+  --ink-3: #9a9893; /* tertiary text, idle states */
+  --hair: #1111111f; /* 1px rules */
+  --hair-strong: #1111114d; /* input outlines */
+  --wash: #11111108; /* hover fill */
+  --signal: #e5372b; /* used only for "working" and errors */
+
+  --sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+  --mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --fs: 18px;
+
+  --gui-w: 0px; /* no sidebar until an image is loaded; see body.has-panel */
+  --mast-h: 64px;
+  --status-h: 44px;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+  border-radius: 0;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 var(--fs) / 1.4 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'ss01', 'tnum';
+}
+
+::selection {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* The sidebar appears with the first image (motion.panelIn adds the class and
+   tweens --gui-w so the whole layout makes room smoothly). */
+body.has-panel {
+  --gui-w: 380px;
+}
+
+body:not(.has-panel) .lil-gui.autoPlace {
+  display: none;
+}
+
+/* ---- Masthead ------------------------------------------------------------ */
+
+#masthead {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: var(--gui-w);
+  height: var(--mast-h);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--hair);
+  background: var(--paper);
+  z-index: 5;
+}
+
+.mark {
+  width: 24px;
+  height: 24px;
+}
+
+.mark .on {
+  fill: var(--ink);
+}
+
+.mark .off {
+  fill: var(--ink-3);
+  opacity: 0.45;
+}
+
+.wordmark {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Stage --------------------------------------------------------------- */
+
+#stage,
+#empty {
+  position: fixed;
+  inset: var(--mast-h) var(--gui-w) var(--status-h) 0;
+}
+
+#stage {
+  overflow: auto;
+  display: flex;
+  padding: 48px 32px 32px;
+  /* Dot grid, like graph paper. */
+  background: radial-gradient(circle, #11111117 0.75px, transparent 1px) 0 0 / 16px 16px, var(--paper);
+}
+
+#frame {
+  position: relative;
+  flex: none;
+  margin: auto;
+  outline: 1px solid var(--hair);
+  background: var(--paper-raised);
+}
+
+#frame[hidden] {
+  display: none;
+}
+
+#frame canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#frame canvas[hidden] {
+  display: none;
+}
+
+#frame canvas.pixelated {
+  image-rendering: pixelated;
+}
+
+#frame.checker {
+  background: repeating-conic-gradient(#e6e5e0 0 25%, var(--paper-raised) 0 50%) 0 0 / 12px 12px;
+}
+
+#frame-tag {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  margin-bottom: 12px;
+  font: 400 var(--fs) / 1 var(--mono);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* Motion helpers (driven by src/motion.ts). */
+.scanline {
+  position: absolute;
+  left: -14px;
+  right: -14px;
+  top: 0;
+  height: 1px;
+  background: var(--ink);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.flash {
+  position: absolute;
+  inset: 0;
+  background: var(--paper-raised);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* ---- Crop editor --------------------------------------------------------- */
+
+#crop {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden; /* keeps the dimming shadow inside the frame */
+  cursor: crosshair;
+  touch-action: none;
+}
+
+#crop[hidden] {
+  display: none;
+}
+
+.crop-box {
+  position: absolute;
+  outline: 1px solid var(--ink);
+  /* Everything outside the box is washed back with paper. */
+  box-shadow: 0 0 0 100vmax #f4f3efc7;
+  cursor: move;
+}
+
+/* Rule-of-thirds guides: faint at rest, firmer while dragging. */
+.crop-box::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.45;
+  transition: opacity 120ms;
+  background:
+    linear-gradient(to right, transparent calc(33.333% - 0.5px), var(--hair-strong) 0 calc(33.333% + 0.5px), transparent 0 calc(66.666% - 0.5px), var(--hair-strong) 0 calc(66.666% + 0.5px), transparent 0),
+    linear-gradient(to bottom, transparent calc(33.333% - 0.5px), var(--hair-strong) 0 calc(33.333% + 0.5px), transparent 0 calc(66.666% - 0.5px), var(--hair-strong) 0 calc(66.666% + 0.5px), transparent 0);
+}
+
+#crop.dragging .crop-box::before {
+  opacity: 1;
+}
+
+.crop-box .h {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  background: var(--ink);
+  outline: 1px solid var(--paper-raised);
+}
+
+/* Larger invisible hit area around each handle. */
+.crop-box .h::before {
+  content: '';
+  position: absolute;
+  inset: -9px;
+}
+
+.crop-box .h[data-h='nw'] { left: 0; top: 0; cursor: nwse-resize; }
+.crop-box .h[data-h='n'] { left: 50%; top: 0; cursor: ns-resize; }
+.crop-box .h[data-h='ne'] { left: 100%; top: 0; cursor: nesw-resize; }
+.crop-box .h[data-h='w'] { left: 0; top: 50%; cursor: ew-resize; }
+.crop-box .h[data-h='e'] { left: 100%; top: 50%; cursor: ew-resize; }
+.crop-box .h[data-h='sw'] { left: 0; top: 100%; cursor: nesw-resize; }
+.crop-box .h[data-h='s'] { left: 50%; top: 100%; cursor: ns-resize; }
+.crop-box .h[data-h='se'] { left: 100%; top: 100%; cursor: nwse-resize; }
+
+/* Registration ticks just outside each corner. */
+.tick {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 0 solid var(--ink);
+  pointer-events: none;
+}
+.tick.tl {
+  top: -6px;
+  left: -6px;
+  border-width: 1px 0 0 1px;
+}
+.tick.tr {
+  top: -6px;
+  right: -6px;
+  border-width: 1px 1px 0 0;
+}
+.tick.bl {
+  bottom: -6px;
+  left: -6px;
+  border-width: 0 0 1px 1px;
+}
+.tick.br {
+  bottom: -6px;
+  right: -6px;
+  border-width: 0 1px 1px 0;
+}
+
+/* ---- Empty state --------------------------------------------------------- */
+
+#empty {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow: auto;
+  background: var(--paper);
+}
+
+#empty[hidden] {
+  display: none;
+}
+
+.intro {
+  width: min(480px, 100%);
+}
+
+.eyebrow {
+  margin: 0 0 16px;
+  font-family: var(--mono);
+  color: var(--ink-3);
+}
+
+/* The one exception to the single type size. */
+.intro h1 {
+  margin: 0;
+  font-weight: 500;
+  font-size: 44px;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+.lede {
+  margin: 12px 0 0;
+  color: var(--ink-2);
+}
+
+.steps {
+  list-style: none;
+  margin: 32px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--hair);
+}
+
+.steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--hair);
+}
+
+.steps span {
+  font-family: var(--mono);
+  color: var(--ink-3);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 32px;
+}
+
+button {
+  font: 500 var(--fs) / 1 var(--sans);
+  padding: 14px 22px;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms, border-color 120ms;
+}
+
+button:hover {
+  background: #2b2b2b;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--hair-strong);
+}
+
+button.secondary:hover {
+  border-color: var(--ink);
+  background: var(--wash);
+}
+
+button:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 3px;
+}
+
+.hint {
+  margin: 16px 0 0;
+  color: var(--ink-3);
+}
+
+/* ---- Status bar ---------------------------------------------------------- */
+
+#status {
+  position: fixed;
+  left: 0;
+  right: var(--gui-w);
+  bottom: 0;
+  height: var(--status-h);
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--hair);
+  background: var(--paper);
+  font: 400 var(--fs) / 1 var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+#status-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px 0 24px;
+  border-right: 1px solid var(--hair);
+  color: var(--ink);
+  flex: none;
+}
+
+#status-state::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+#status-state[data-state='idle'] {
+  color: var(--ink-3);
+}
+
+#status-state[data-state='idle']::before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--ink-3);
+}
+
+#status-state[data-state='busy']::before {
+  background: var(--signal);
+  animation: pulse 0.9s ease-in-out infinite alternate;
+}
+
+#status-state[data-state='error'] {
+  color: var(--signal);
+}
+
+#status-state[data-state='error']::before {
+  background: var(--signal);
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0.3;
+  }
+}
+
+#status-text {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.seg {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px;
+  border-right: 1px solid var(--hair);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seg b {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.seg.note {
+  color: var(--ink-2);
+}
+
+.keys {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 24px;
+  color: var(--ink-3);
+}
+
+kbd {
+  font: inherit;
+  padding: 3px 7px;
+  border: 1px solid var(--hair-strong);
+  color: var(--ink-2);
+}
+
+kbd:not(:first-child) {
+  margin-left: 10px;
+}
+
+/* ---- Drop overlay -------------------------------------------------------- */
+
+body.dragging::after {
+  content: 'Drop to load';
+  position: fixed;
+  inset: 12px;
+  z-index: 2000;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--ink);
+  background: #f4f3efe6;
+  font: 400 var(--fs) / 1 var(--mono);
+  color: var(--ink);
+  pointer-events: none;
+}
+
+/* ---- lil-gui theme ------------------------------------------------------- */
+
+.lil-gui {
+  --background-color: var(--paper);
+  --text-color: var(--ink);
+  --title-background-color: var(--paper);
+  --title-text-color: var(--ink);
+  --widget-color: transparent;
+  --hover-color: var(--wash);
+  --focus-color: #1111110f;
+  --number-color: var(--ink);
+  --string-color: var(--ink);
+  --font-family: var(--sans);
+  --font-family-mono: var(--mono);
+  --font-size: var(--fs);
+  --input-font-size: var(--fs);
+  --padding: 16px;
+  --spacing: 8px;
+  --widget-height: 36px;
+  --title-height: 52px;
+  --name-width: 44%;
+  /* Room at the end of the track for the round handle. */
+  --slider-knob-width: 16px;
+  --slider-input-width: 30%;
+  --slider-input-min-width: 68px;
+  --color-input-min-width: 68px;
+  --widget-border-radius: 0;
+  --folder-indent: 0px;
+  --scrollbar-width: 4px;
+  --checkbox-size: 18px;
+}
+
+.lil-gui.autoPlace {
+  top: 0;
+  right: 0;
+  max-height: 100%;
+  border-left: 1px solid var(--hair);
+}
+
+.lil-gui.lil-root > .lil-children::-webkit-scrollbar-thumb {
+  background: var(--hair-strong);
+  border-radius: 0;
+}
+
+/* Root title lines up with the masthead. */
+.lil-gui.lil-root > .lil-title {
+  height: var(--mast-h);
+  line-height: var(--mast-h);
+  padding-left: 20px;
+  border-bottom: 1px solid var(--hair);
+  font: 400 var(--fs) / var(--mast-h) var(--mono);
+  color: var(--ink-3);
+}
+
+/* Section titles: hairline rules, no fills. */
+.lil-gui .lil-gui > .lil-title {
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+}
+
+.lil-gui.lil-root > .lil-children > .lil-gui > .lil-title {
+  border-color: var(--hair);
+}
+
+.lil-gui .lil-gui .lil-gui > .lil-title {
+  font-weight: 400;
+  color: var(--ink-2);
+  padding-left: calc(var(--padding) + 10px);
+}
+
+.lil-gui .lil-gui .lil-gui > .lil-children {
+  border-left: none;
+  padding-left: 10px;
+}
+
+.lil-gui + .lil-controller {
+  border-top-color: var(--hair);
+}
+
+.lil-controller > .lil-name {
+  color: var(--ink-2);
+}
+
+/* Inputs: transparent with a hairline outline. */
+.lil-gui input[type='number'],
+.lil-gui input[type='text'] {
+  font-family: var(--mono);
+  border: 1px solid var(--hair);
+  background: transparent;
+  padding: 0 8px;
+}
+
+.lil-gui input[type='number']:focus,
+.lil-gui input[type='text']:focus {
+  border-color: var(--ink);
+  background: var(--paper-raised);
+}
+
+/* Slider: a 1px track with an ink fill, ending in a round handle. */
+.lil-controller.lil-number .lil-slider {
+  background: linear-gradient(var(--hair-strong), var(--hair-strong)) center / 100% 1px no-repeat;
+  overflow: visible;
+}
+
+/* Full shorthand: lil-gui's own hover rule would otherwise erase the track line. */
+.lil-controller.lil-number .lil-slider:hover,
+.lil-controller.lil-number .lil-slider.lil-active {
+  background: linear-gradient(var(--hair-strong), var(--hair-strong)) center / 100% 1px no-repeat, var(--wash);
+}
+
+.lil-controller.lil-number .lil-slider .lil-fill {
+  position: relative;
+  background: linear-gradient(var(--ink), var(--ink)) center / 100% 1px no-repeat;
+  /* The knob's reserved width stays transparent; the circle is drawn in it. */
+  border-right: var(--slider-knob-width) solid transparent;
+}
+
+.lil-controller.lil-number .lil-slider .lil-fill::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: calc(-1 * var(--slider-knob-width));
+  width: var(--slider-knob-width);
+  height: var(--slider-knob-width);
+  border-radius: 50%;
+  background: var(--ink);
+  transform: translateY(-50%);
+  transition: transform 120ms;
+  cursor: pointer; /* hand on the handle; the rest of the track keeps lil-gui's ↔ cursor */
+}
+
+.lil-controller.lil-number .lil-slider.lil-active .lil-fill::after {
+  transform: translateY(-50%) scale(1.15);
+}
+
+/* Checkboxes: a hairline square that fills with ink. */
+.lil-gui input[type='checkbox'] {
+  border: 1px solid var(--hair-strong);
+  background: transparent;
+}
+
+.lil-gui input[type='checkbox']:checked {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+
+.lil-gui input[type='checkbox']:checked::before {
+  font-size: 14px;
+  line-height: 16px;
+}
+
+/* Dropdowns and colour swatches. */
+.lil-controller.lil-option .lil-display {
+  border: 1px solid var(--hair);
+  background: transparent;
+  padding-left: 8px;
+}
+
+.lil-controller.lil-option .lil-widget:hover .lil-display,
+.lil-controller.lil-option .lil-display.lil-focus {
+  border-color: var(--ink);
+  background: transparent;
+}
+
+.lil-controller.lil-color .lil-display {
+  border: 1px solid var(--hair-strong);
+}
+
+/* Action buttons: hairline outline; ink on hover. */
+.lil-gui .lil-controller button {
+  border: 1px solid var(--hair-strong);
+  background: transparent;
+  color: var(--ink);
+  font: 400 var(--fs) / 1 var(--sans);
+  padding: 0 14px;
+  text-align: left;
+}
+
+@media (hover: hover) {
+  .lil-gui .lil-controller button:hover {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+  }
+  .lil-gui .lil-controller button:focus {
+    box-shadow: none;
+    border-color: var(--ink);
+  }
+}
+
+.lil-gui .lil-controller button:active {
+  background: #2b2b2b;
+  color: var(--paper);
+}
+
+.lil-controller.lil-disabled {
+  opacity: 0.35;
+}
+
+/* ---- Small screens ------------------------------------------------------- */
+
+@media (max-width: 760px) {
+  /* On phones the sidebar docks to the bottom instead of taking width. */
+  body.has-panel {
+    --gui-w: 0px;
+  }
+  .keys,
+  .meta {
+    display: none;
+  }
+  .lil-gui.autoPlace {
+    top: auto;
+    bottom: var(--status-h);
+    width: 100% !important;
+    max-height: 55%;
+    border-left: none;
+    border-top: 1px solid var(--hair);
+  }
+  .lil-gui.lil-root > .lil-title {
+    height: var(--title-height);
+    line-height: var(--title-height);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+  #status-state[data-state='busy']::before {
+    animation: none;
+  }
+}
